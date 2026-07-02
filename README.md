@@ -1,5 +1,6 @@
 # hc-g80_6.18_head
     готовый source для сборки image под Huastlink HC-G80.
+    preloader BL2 , bootloader BL31+U-Boot (u-boot.fip), recovery.itb, sysupgrade.itb
 
     bootloader изменен с NMBM на актуальный UBI layout. 
 
