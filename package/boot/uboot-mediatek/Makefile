@@ -1,0 +1,103 @@
+include $(TOPDIR)/rules.mk
+include $(INCLUDE_DIR)/kernel.mk
+
+PKG_VERSION:=2023.07.02
+PKG_HASH:=6b6a48581c14abb0f95bd87c1af4d740922406d7b801002a9f94727fdde021d5
+PKG_BUILD_DEPENDS:=!(TARGET_ramips||TARGET_mediatek_mt7623):arm-trusted-firmware-tools/host
+
+include $(INCLUDE_DIR)/u-boot.mk
+include $(INCLUDE_DIR)/package.mk
+include $(INCLUDE_DIR)/host-build.mk
+
+MT7621_LOWLEVEL_PRELOADER_URL:=https://raw.githubusercontent.com/mtk-openwrt/mt7621-lowlevel-preloader/a03b07c60bf1ba4add9b671d32caa102fe948180/
+
+define Download/mt7621-stage-sram
+  FILE:=mt7621_stage_sram.bin
+  URL:=$(MT7621_LOWLEVEL_PRELOADER_URL)
+  HASH:=1dda68aa089f0ff262e01539b990dea478952e9fb68bcc0a8cd6f76f0135c62e
+endef
+
+define Download/mt7621-stage-sram-noprint
+  FILE:=mt7621_stage_sram_noprint.bin
+  URL:=$(MT7621_LOWLEVEL_PRELOADER_URL)
+  HASH:=8ee419275144fc298e9444d413d98e965a55d283152a74ea6a1f8de79eb516b6
+endef
+
+ifdef CONFIG_TARGET_ramips_mt7621
+ifdef CONFIG_DEBUG
+$(eval $(call Download,mt7621-stage-sram))
+else
+$(eval $(call Download,mt7621-stage-sram-noprint))
+endif
+endif
+
+define U-Boot/Default
+  BUILD_TARGET:=mediatek
+  UBOOT_IMAGE:=u-boot-mtk.bin
+  HIDDEN:=1
+endef
+
+define U-Boot/mt7981_mt7981_maxis-hcg80
+  NAME:=MT7981 MAXIS HCG80
+  BUILD_SUBTARGET:=filogic
+  BUILD_DEVICES:=mt7981_maxis-hcg80
+  UBOOT_CONFIG:=mt7981_mt7981_maxis-hcg80
+  UBOOT_IMAGE:=u-boot.fip
+  BL2_BOOTDEV:=spim-nand
+  BL2_SOC:=mt7981
+  BL2_DDRTYPE:=ddr3
+  DEPENDS:=+trusted-firmware-a-mt7981-spim-nand-ddr3
+endef
+
+UBOOT_TARGETS :=mt7981_mt7981_maxis-hcg80
+
+ifdef CONFIG_TARGET_mediatek
+UBOOT_MAKE_FLAGS += $(UBOOT_IMAGE:.fip=.bin)
+endif
+
+define Build/fip-image
+	$(if $(FIP_COMPRESS),\
+		xz -f -e -k -9 -C crc32 $(STAGING_DIR_IMAGE)/$(if $(BL2_SOC),$(BL2_SOC),$(BUILD_SUBTARGET))-$(BL2_BOOTDEV)-$(if $(BL2_DDRTYPE),$(BL2_DDRTYPE)-)$(if $(BL2_DDRBLOB),$(BL2_DDRBLOB)ddr-)bl31.bin ;\
+		xz -f -e -k -9 -C crc32 $(PKG_BUILD_DIR)/u-boot.bin \
+	)
+	$(STAGING_DIR_HOST)/bin/fiptool create \
+		--soc-fw $(STAGING_DIR_IMAGE)/$(if $(BL2_SOC),$(BL2_SOC),$(BUILD_SUBTARGET))-$(BL2_BOOTDEV)-$(if $(BL2_DDRTYPE),$(BL2_DDRTYPE)-)$(if $(BL2_DDRBLOB),$(BL2_DDRBLOB)ddr-)bl31.bin$(if $(FIP_COMPRESS),.xz) \
+		--nt-fw $(PKG_BUILD_DIR)/u-boot.bin$(if $(FIP_COMPRESS),.xz) \
+		$(PKG_BUILD_DIR)/u-boot.fip
+endef
+
+ifdef CONFIG_TARGET_ramips_mt7621
+define Build/Prepare
+	$(call Build/Prepare/Default)
+ifdef CONFIG_DEBUG
+	$(CP) $(DL_DIR)/mt7621_stage_sram.bin $(PKG_BUILD_DIR)/
+else
+	$(CP) $(DL_DIR)/mt7621_stage_sram_noprint.bin $(PKG_BUILD_DIR)/mt7621_stage_sram.bin
+endif
+endef
+endif
+
+define Build/Configure
+	$(call Build/Configure/U-Boot)
+	sed -i 's/CONFIG_TOOLS_LIBCRYPTO=y/# CONFIG_TOOLS_LIBCRYPTO is not set/' $(PKG_BUILD_DIR)/.config
+endef
+
+define Build/Compile
+	$(call Build/Compile/U-Boot)
+ifeq ($(UBOOT_IMAGE),u-boot.fip)
+	$(call Build/fip-image)
+endif
+endef
+
+# don't stage files to bindir, let target/linux/mediatek/image/*.mk do that
+ifdef CONFIG_TARGET_mediatek
+define Package/u-boot/install
+endef
+endif
+
+define Build/InstallDev
+	$(INSTALL_DIR) $(STAGING_DIR_IMAGE)
+	$(INSTALL_DATA) $(PKG_BUILD_DIR)/$(UBOOT_IMAGE) $(STAGING_DIR_IMAGE)/$(BUILD_VARIANT)-$(UBOOT_IMAGE)
+endef
+
+$(eval $(call BuildPackage/U-Boot))
